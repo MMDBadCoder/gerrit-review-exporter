@@ -1,0 +1,12 @@
+services:
+  gerrit:
+    image: gerritcodereview/gerrit:3.13.4@sha256:6bf624659f12fc9d5a4d017774703aa5d0239cb3d718a6e592fbc8117f4013b1
+    user: root
+    entrypoint: ["/bin/bash", "/test-entrypoint.sh"]
+    volumes:
+      - ./tests/gerrit-entrypoint.sh:/test-entrypoint.sh:ro
+    ports:
+      - "127.0.0.1:18080:8080"
+      - "127.0.0.1:29419:29418"
+    mem_limit: 1536m
+    cpus: 2

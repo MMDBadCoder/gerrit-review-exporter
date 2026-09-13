@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+review-export/
+.venv/
+.local-gerrit/
+.env
+.env.*
+*.cookies
+.agents/
+.codex/

@@ -1,0 +1,53 @@
+{
+  "assertions": [
+    "Authenticated export captures all four real reviews with one-item pagination",
+    "Merged, abandoned, and open changes are included",
+    "Administrator export includes the private review",
+    "Every published comment ID, body, and path matches the real Gerrit API",
+    "Unpublished drafts remain excluded",
+    "Reply thread spans both real patch sets",
+    "Resolved reply state is preserved",
+    "Unicode and actual source context are preserved",
+    "CI messages and tags are retained",
+    "Developer and reviewer identities remain distinct",
+    "Original code is retrievable for patch set 1",
+    "Original code is retrievable for patch set 2",
+    "Raw checksums, normalized checksums, patch checksums, and git fsck pass",
+    "Unchanged rerun reuses all four snapshots",
+    "Incremental rerun captures only the modified real review",
+    "Incremental message is present in the normalized dataset",
+    "Earlier raw snapshot survives an incremental update",
+    "Anonymous API visibility excludes the private review",
+    "Real Git fetch failures produce an incomplete report",
+    "Rerun recovers all reviews after restoring the real Git remote"
+  ],
+  "changes": {
+    "abandoned": 10,
+    "merged": 9,
+    "open": 11,
+    "private": 12
+  },
+  "export_directory": ".local-gerrit/20260913T041407-2da7e9/export",
+  "final_counts": {
+    "changes": 4,
+    "comments": 4,
+    "messages": 12,
+    "revisions": 5,
+    "threads": 3
+  },
+  "finished_at": "2026-09-13T04:14:10.914487+00:00",
+  "gerrit_version": "3.13.4",
+  "project": "export-e2e/20260913T041407-2da7e9",
+  "server_url": "http://127.0.0.1:18080",
+  "started_at": "2026-09-13T04:14:07.104440+00:00",
+  "status": "passed",
+  "exporter_version": "0.1.0",
+  "validation_commands": [
+    "make test",
+    "make test-real"
+  ],
+  "local_tests": {
+    "count": 22,
+    "status": "passed"
+  }
+}
