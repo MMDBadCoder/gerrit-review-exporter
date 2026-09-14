@@ -1,6 +1,6 @@
 # Gerrit review → `.rv` learning files
 
-**Version 0.2.1** · [Testing guide](TESTING.md) · [Release notes](CHANGELOG.md)
+**Version 0.2.2** · [Testing guide](TESTING.md) · [Release notes](CHANGELOG.md)
 
 Turns finished Gerrit code reviews into small, self-contained text files an LLM
 or agent can learn from. One file per resolved review comment thread, each
@@ -85,6 +85,8 @@ default, and an unknown key is an error rather than something silently ignored.
 | `git_url` | `null` | Clone URL for fetching patch sets. Derived from `url` when exactly one project is configured |
 | `auth` | `anonymous` | `anonymous`, `basic`, `bearer` or `netrc` |
 | `user_env` / `password_env` / `token_env` | `GERRIT_USER` / `GERRIT_HTTP_PASSWORD` / `GERRIT_TOKEN` | Environment variables holding credentials. Credentials are never read from the config file. Under `basic`, the same pair authenticates Git over HTTP(S) |
+| `netrc_file` | `null` | Path to a netrc file for `auth: netrc`. `null` uses the default location |
+| `ca_file` | `null` | CA bundle for verifying the server's TLS certificate. `null` uses the system trust store |
 | `timeout` / `retries` / `delay` | `30` / `3` / `0.0` | Per-request seconds, retry count, and a delay between requests for rate-limited servers |
 
 ### `filters` — what to export
@@ -130,10 +132,34 @@ Set any to `null` to remove that limit.
 in parallel; Git fetches into the shared archive are serialised, because one bare
 repository cannot take concurrent writes safely.
 
-`output.dir` receives the `.rv` files, a `summary.json`, and `code.git` — the bare
-archive of every patch set fetched. Patch set refs are SHA-addressed, so a second
-run re-fetches nothing and a force-push cannot overwrite what was already
-captured.
+| Key | Default | Meaning |
+|---|---|---|
+| `output.dir` | `rv-out` | Where the files go. Created if missing |
+| `output.extension` | `.rv` | Suffix for each generated file |
+| `output.overwrite` | `true` | Replace a file that already exists. `false` keeps the earlier one, so a second run only adds what is new |
+
+`output.dir` also receives `summary.json` and `code.git` — the bare archive of
+every patch set fetched. Patch set refs are SHA-addressed, so a second run
+re-fetches nothing and a force-push cannot overwrite what was already captured.
+
+### `summary.json`
+
+Written at the end of every run, including one a limit cut short:
+
+```json
+{
+  "changes_seen": 42,
+  "files_written": 137,
+  "comments_read": 402,
+  "stopped_by": "limits.max_files reached",
+  "failed_changes": [["1187", "git fetch failed: ..."]],
+  "output_dir": "rv-out"
+}
+```
+
+`stopped_by` is `null` on a run that finished on its own. `failed_changes` lists
+the changes that could not be exported and why; the rest of the run is unaffected
+by them, so a single unreadable change does not cost you the other hundred.
 
 ## How a comment is matched to its fix
 

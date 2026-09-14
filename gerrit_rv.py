@@ -33,7 +33,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 # Gerrit's synthetic paths. Neither names a file in the tree, so neither has
 # code to show; they still carry review discussion worth keeping.

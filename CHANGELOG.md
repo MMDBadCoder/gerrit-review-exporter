@@ -1,5 +1,18 @@
 # Release notes
 
+## 0.2.2
+
+Documentation only; no behaviour changes.
+
+- Documented `gerrit.netrc_file`, `gerrit.ca_file` and `output.extension`, which
+  existed and worked but appeared in no table, and gave `output` its own table so
+  `overwrite` is visible.
+- Documented the contents of `summary.json`, including that `failed_changes`
+  records changes that could not be exported without costing you the rest of the
+  run.
+- Corrected the unit test count in TESTING.md, which still said 57 after the
+  credential tests took it to 63, and listed what those tests cover.
+
 ## 0.2.1
 
 - **A Gerrit HTTP credential is now enough on its own.** With `auth: basic` and an
