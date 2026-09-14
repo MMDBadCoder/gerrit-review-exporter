@@ -1,146 +1,97 @@
-# Testing version 0.1.0
+# Testing version 0.2.0
 
-You can run both suites without credentials for an existing Gerrit server.
-All accounts, projects, comments, and code used here are synthetic.
+Two suites. Neither needs credentials for any existing Gerrit server, and every
+account, project, comment and line of code they use is synthetic.
 
-## 1. Get the release and check prerequisites
+## 1. Prerequisites
 
 ```bash
-git clone --branch v0.1.0 https://github.com/MMDBadCoder/gerrit-review-exporter.git
-cd gerrit-review-exporter
-python3 --version
+python3 --version   # 3.10 or later
 git --version
-python3 gerrit_export.py --version
+python3 gerrit_rv.py --version   # 0.2.0
 ```
 
-Use Python 3.10 or later and Git on Linux or macOS. The exporter uses POSIX file
-locking and symlinks; on Windows use a Linux environment such as WSL2. No pip
-dependencies are required. `--version` should print:
+No pip dependencies. Linux or macOS; on Windows use WSL2.
 
-```text
-gerrit-review-exporter 0.1.0
-```
-
-## 2. Run the local regression suite
+## 2. Unit tests — no network, no Docker
 
 ```bash
 make test
-# Equivalent without make:
-python3 -m unittest discover -s tests -v
+# or: python3 -m unittest discover -s tests -v
 ```
 
-Expected result: **22 tests, OK**, with exit code 0. Some tests deliberately print
-`Export incomplete` or simulated HTTP/Git failures: these exercise failure
-handling. The unittest summary determines whether the suite passed.
+57 tests covering the parts that decide whether a `.rv` file is correct:
 
-These tests start HTTP fixtures on random loopback ports and create real Git
-repositories in temporary directories, which are cleaned up afterward. They test
-pagination, resumption after interruption, Unicode, thread reconstruction, equal
-timestamps, missing parents/cycles, raw preservation, incremental updates, merge
-and binary patches, authentication, retries, and corruption detection.
+| Area | What is pinned down |
+|---|---|
+| Line mapping | Insertions do not move the line above them; replaced lines report the region that replaced them; deletions shift what follows; offsets accumulate across hunks |
+| Comment spans | A Gerrit range ending at character 0 does not cover that line |
+| Threads | Replies on later patch sets stay in one thread; line movement never splits a thread; reply cycles and invisible parents are kept and flagged; parents precede replies even when timestamps tie |
+| Resolution | The last comment decides resolved state; the anchor is the first comment, not the newest |
+| Formatting | Change messages survive as one CSV-safe field; metadata quotes only when needed; stale line numbers clamp to the file |
+| Config | Defaults fill in, values override, a mistyped key is rejected, `null` limits mean no limit |
+| Query | Empty filter lists do not restrict; multiple values become an OR group; values needing quotes are quoted |
+| Limits | A budget stops at its limit, refuses partial group takes, and reports which limit stopped the run |
 
-No external network connection is required for this suite. The process must be
-allowed to open loopback sockets. A sandbox that forbids sockets will report
-`PermissionError: Operation not permitted`; run in an environment that allows
-local test servers.
+The scenario tests build **real Git repositories** and let `Archive` fetch from
+them, so the fetch, the SHA-addressed refs and `git show` all run for real:
 
-## 3. Run against actual Gerrit in Docker
+- a comment on patch set 3 of a change that ran to 12, answered at 9
+- two review rounds on one change resolving independently
+- a thread answered in words with no code change
+- a file deleted by the resolving patch set
+- a file added by the patch set under review
+- file-level, commit-message and `/PATCHSET_LEVEL` comments
+- unresolved threads, binary files, stale line numbers, excluded paths
+- an unchanged region correctly labelled as not edited
 
-Install Docker Engine/Desktop and Docker Compose v2, and start the daemon:
+## 3. Real Gerrit — Docker
 
 ```bash
-docker version
-docker compose version
 make test-real
-# Equivalent without make:
-bash tests/run_real_gerrit.sh
 ```
 
-The first run downloads the official Gerrit image. Docker therefore needs network
-access to the image registry. The image is pinned to version **3.13.4** and its
-digest in `compose.gerrit-test.yaml`. It bundles the required Java runtime; you do
-not need Java installed on the host. The container is limited to 1.5 GiB memory
-and 2 CPUs; allow additional host resources for Docker, Python, and Git.
+This starts Gerrit 3.13.4 on `127.0.0.1:18080`, waits for readiness, creates a
+uniquely named project with real accounts, and seeds reviews by pushing to
+`refs/for/main` and posting published comments through the REST API.
 
-The runner:
+It then runs the exporter against that server and checks 35 assertions,
+including:
 
-1. Starts a dedicated Gerrit container with ports bound to `127.0.0.1:18080`
-   (HTTP) and `127.0.0.1:29419` (SSH).
-2. Waits up to 180 seconds for the expected server version.
-3. Creates developer, reviewer, and CI accounts and a uniquely named test project.
-4. Pushes actual Git commits for merged, abandoned, open, and private reviews.
-5. Adds two patch sets, replies, Unicode/file comments, bot feedback, votes, and a draft.
-6. Runs the exporter over real authenticated REST and Git HTTP connections.
-7. Compares the exported data with Gerrit, checks archive integrity, tests an
-   incremental update, and tests recovery after a deliberately invalid Git URL.
+- every document has two metadata lines, a blank line, and the three sections in
+  order, with balanced quoting and no embedded newlines
+- the long-running change anchors at patch set 3 and resolves at 9 — **not** 12
+- the before section holds the reviewed code and the after section holds the fix
+- non-ASCII comment text survives the round trip
+- a thread answered in discussion reports `resolved_in=none` and says why
+- an unresolved thread is excluded by default and included with
+  `enrich.include_unresolved`
+- `limits.max_files` stops the run and the run says so
+- **nothing on Gerrit was modified** — the open thread is still open afterwards
 
-Expected result: **20 `PASS:` lines**, exit code 0, and `"status": "passed"` in
-`.local-gerrit/latest-results.json`. To inspect the result:
+The harness refuses any non-loopback URL, so it cannot touch a real server.
 
-```bash
-python3 -m json.tool .local-gerrit/latest-results.json
-```
+### Bootstrap credentials
 
-The final primary sample has **4 changes, 5 revisions, 4 inline/file comments,
-12 general messages, and 3 threads**. The report includes the exact output
-directory and all assertions. Under `.local-gerrit/<run>/`, inspect:
+The container runs `gerrit.war init --dev`, which creates `admin` with the
+well-known development password `secret`. The harness uses that to mint tokens.
+A cookie session from `/login/?account_id=` is deliberately **not** used: Gerrit
+accepts it for GETs but rejects writes made with it, so seeding would fail at the
+first `PUT`.
 
-- `real-gerrit-results.json`: evidence and coverage counts.
-- `export-*.log`: exporter command output, including expected failure cases.
-- `verify.log`: local integrity verification output.
-- `export/`: primary raw snapshots, normalized JSONL, patches, and Git archive.
-- `anonymous-export/`: narrower visibility excludes the private change.
-- `resumed-export/`: successful recovery after the invalid Git remote test.
+### Artefacts and cleanup
 
-The synthetic results from the original validation run are committed at
-[`tests/evidence/gerrit-3.13.4.json`](tests/evidence/gerrit-3.13.4.json). Actual
-runtime data and credentials are excluded from Git. Test tokens are generated
-in memory, expire after one day, and are not needed from you.
-
-If Gerrit is already running from this Compose setup, rerun just the harness:
+Each run writes to `.local-gerrit/<run-id>/`: the seeded working copy, the config
+used, the exported `.rv` files and a `report.json`. These survive container
+removal.
 
 ```bash
-python3 tests/real_gerrit.py
-```
-
-Each run creates a new project and new accounts. The runner leaves the container
-and data available for inspection. Open <http://localhost:18080> on the Docker
-host and use the development account selector to view reviews. This login mode
-is for the loopback-only test instance; do not expose it as a production service.
-
-## 4. Stop or remove the test instance
-
-```bash
-# Stop it while preserving the container and its synthetic Gerrit data:
+# Stop the container but keep its data:
 docker compose -p gerrit-export-test -f compose.gerrit-test.yaml stop
 
-# Start the same container again:
-docker compose -p gerrit-export-test -f compose.gerrit-test.yaml start
-
-# Remove the test container and its synthetic Gerrit database:
+# Remove the container and its synthetic Gerrit data:
 docker compose -p gerrit-export-test -f compose.gerrit-test.yaml down
 ```
 
-Exported files under `.local-gerrit/` remain after `down`. The Gerrit database is
-inside the container; deleting/recreating that container removes the test reviews.
-
-## Troubleshooting
-
-| Symptom | What to check |
-| --- | --- |
-| Docker socket permission denied | Run using an account authorized to use the local Docker daemon. |
-| Port already allocated | Check what uses ports 18080 and 29419. Do not point the harness at an unrelated server. |
-| Gerrit readiness timeout | Inspect `docker compose -p gerrit-export-test -f compose.gerrit-test.yaml logs`; check RAM and registry connectivity. |
-| Wrong version on localhost:18080 | Ensure the pinned test container owns that port. |
-| Unit tests cannot bind sockets | Allow loopback sockets in the test environment. |
-| Harness fails | Read `.local-gerrit/latest-results.json`, the run's `export-*.log`, and container logs. |
-| Too many tokens after many test runs | Recreate only this disposable test container with `down`, then `make test-real`. |
-
-## What this proves
-
-The release was tested with Python 3.14.4, Git 2.53.0, Docker, and real Gerrit
-3.13.4 on Linux. The supported Python floor is 3.10; that floor and macOS have
-not been separately exercised in this validation. The suite does not establish
-compatibility with every Gerrit release/plugin or five-year production-scale
-performance. Test a representative sample on your own server, then reconcile
-the full export report with the visibility of the exporting account.
+Each run creates a new project and does not clean up previous ones. Validation on
+3.13.4 is not a claim of compatibility with every Gerrit version or plugin.

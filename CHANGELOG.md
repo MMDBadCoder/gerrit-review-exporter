@@ -1,23 +1,27 @@
-# Changelog
+# Release notes
 
-## 0.1.0 — 2026-09-13
+## 0.2.0
 
-Initial release for capturing a Gerrit project's review history and reviewed code.
+Replaces the raw-capture tool with a `.rv` generator: one file per resolved
+review comment thread, holding the code the reviewer saw, the discussion, and
+the code that answered it.
 
-- Export published inline/file comments, general messages, reviewers, revisions,
-  and API-exposed metadata across merged, abandoned, and open changes.
-- Retain raw responses and historical snapshots; produce linked JSONL datasets.
-- Fetch patch-set commits into a bare Git archive and generate parent diffs.
-- Resume interrupted exports, update changed reviews, and report incomplete runs.
-- Preserve cross-patch-set threads with parent-before-reply ordering, even when
-  Gerrit gives a parent and reply identical timestamps.
-- Verify raw/normalized checksums, patches, refs, and Git object integrity.
-- Support HTTP Basic, bearer, netrc, and anonymous API authentication.
-- Include a pinned Docker-based Gerrit 3.13.4 setup and reproducible test harness.
+- **New `gerrit_rv.py`** with `init-config`, `check-config` and `export`.
+  `gerrit_export.py` and its JSONL/normalise/verify pipeline are removed.
+- **One JSON config file** for filters (projects, reviewers, branches, status,
+  recency, path excludes), limits, parallel workers and enrichment. An unknown
+  key is an error, not a silently ignored typo.
+- **Limits stop the job**: `max_changes`, `max_comments`, `max_files`. Whatever
+  was written stays complete, and the run says which limit stopped it.
+- **Resolution matching** walks forward from the comment's patch set to the first
+  later one that actually changed the file, rather than assuming the next patch
+  set or the last. Threads answered only in words are reported as such.
+- **Line tracing through diff hunks**, so the after section shows the region that
+  replaced the commented lines even when the file moved.
+- Handles file-level comments, commit-message comments, `/PATCHSET_LEVEL`,
+  deleted and added files, binary files, stale line numbers, replies on much
+  later patch sets, orphaned reply roots and reply cycles.
 
-Validation: 22 local tests and 20 checks against self-hosted Gerrit 3.13.4.
-See [TESTING.md](TESTING.md) and [saved real-server evidence](tests/evidence/gerrit-3.13.4.json).
+## 0.1.0
 
-Scope: data capture only. No embeddings, RAG service, or generated agent skill.
-API visibility, deleted/redacted data, external plugin/CI storage, and production
-scale remain subject to the limitations described in the README.
+Raw capture of Gerrit review history with reproducible tests.

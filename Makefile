@@ -9,4 +9,4 @@ test-real:
 	PYTHON="$(PYTHON)" bash tests/run_real_gerrit.sh
 
 version:
-	$(PYTHON) gerrit_export.py --version
+	$(PYTHON) gerrit_rv.py --version
