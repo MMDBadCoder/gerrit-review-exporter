@@ -1,6 +1,6 @@
 # Gerrit review → `.rv` learning files
 
-**Version 0.2.0** · [Testing guide](TESTING.md) · [Release notes](CHANGELOG.md)
+**Version 0.2.1** · [Testing guide](TESTING.md) · [Release notes](CHANGELOG.md)
 
 Turns finished Gerrit code reviews into small, self-contained text files an LLM
 or agent can learn from. One file per resolved review comment thread, each
@@ -61,10 +61,16 @@ export GERRIT_USER GERRIT_HTTP_PASSWORD
 python3 gerrit_rv.py export --config rv.config.json
 ```
 
-Git authentication is separate from the REST credentials and is **not** derived
-from them. Use your existing SSH key with an `ssh://` `git_url`, or configure
-Git's credential helper for HTTPS. Git prompts are disabled so an unattended run
-fails visibly instead of hanging.
+That is all you need. With `auth: basic` and an HTTP(S) clone URL, **Git uses the
+same credential**: the tool hands it a helper that reads the same two environment
+variables, so patch set fetches authenticate without any askpass or credential
+helper of your own. The helper names the variables and never carries their
+values, so the password stays out of the process list and off disk.
+
+For an `ssh://` `git_url` the tool adds nothing and your existing SSH key is
+used. Under `bearer` or `netrc` auth, Git credentials remain yours to configure —
+neither is an HTTP username/password pair Git can use. Git prompts are disabled
+either way, so an unattended run fails visibly instead of hanging.
 
 ## Configuration
 
@@ -78,7 +84,7 @@ default, and an unknown key is an error rather than something silently ignored.
 | `url` | `http://localhost:8080` | Base URL, including any prefix, **without** `/a` |
 | `git_url` | `null` | Clone URL for fetching patch sets. Derived from `url` when exactly one project is configured |
 | `auth` | `anonymous` | `anonymous`, `basic`, `bearer` or `netrc` |
-| `user_env` / `password_env` / `token_env` | `GERRIT_USER` / `GERRIT_HTTP_PASSWORD` / `GERRIT_TOKEN` | Environment variables holding credentials. Credentials are never read from the config file |
+| `user_env` / `password_env` / `token_env` | `GERRIT_USER` / `GERRIT_HTTP_PASSWORD` / `GERRIT_TOKEN` | Environment variables holding credentials. Credentials are never read from the config file. Under `basic`, the same pair authenticates Git over HTTP(S) |
 | `timeout` / `retries` / `delay` | `30` / `3` / `0.0` | Per-request seconds, retry count, and a delay between requests for rate-limited servers |
 
 ### `filters` — what to export

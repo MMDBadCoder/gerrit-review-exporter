@@ -524,3 +524,50 @@ class Scenarios(unittest.TestCase):
         self.config["filters"]["exclude_paths"] = ["vendor/*"]
         record = self.build([comment("a", 1, path="vendor/lib.py", line=1, message="x")])
         self.assertIsNone(record)
+
+
+class HttpCredentials(unittest.TestCase):
+    """Git must authenticate with the same HTTP credential the REST client uses.
+
+    Without this the REST half authenticates and the Git half does not, so a run
+    configured with nothing but a Gerrit HTTP password discovers changes and then
+    fails to fetch a single patch set.
+    """
+
+    def basic(self, **overrides):
+        return {**rv.DEFAULT_CONFIG["gerrit"], "auth": "basic", **overrides}
+
+    def test_http_remote_gets_a_credential_helper(self):
+        config = rv.http_credential_config(self.basic(), "https://review.example.com/a/p")
+        self.assertEqual(len(config), 1)
+        self.assertTrue(config[0].startswith("credential.helper="))
+
+    def test_the_helper_names_the_variables_and_never_holds_the_secret(self):
+        # The snippet reaches Git on the command line, which `ps` can read.
+        config = rv.http_credential_config(self.basic(), "http://review.example.com/a/p")
+        self.assertIn("$GERRIT_USER", config[0])
+        self.assertIn("$GERRIT_HTTP_PASSWORD", config[0])
+        self.assertNotIn("secret", config[0])
+
+    def test_configured_variable_names_are_honoured(self):
+        config = rv.http_credential_config(
+            self.basic(user_env="MY_USER", password_env="MY_PASS"), "https://h/p")
+        self.assertIn("$MY_USER", config[0])
+        self.assertIn("$MY_PASS", config[0])
+
+    def test_ssh_remotes_are_left_alone(self):
+        self.assertEqual(rv.http_credential_config(self.basic(), "ssh://h:29418/p"), ())
+
+    def test_anonymous_and_token_auth_add_nothing(self):
+        for auth in ("anonymous", "bearer", "netrc"):
+            settings = {**rv.DEFAULT_CONFIG["gerrit"], "auth": auth}
+            self.assertEqual(rv.http_credential_config(settings, "https://h/p"), ())
+
+    def test_git_passes_the_config_to_the_command(self):
+        # -c settings must precede the subcommand or Git ignores them.
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory) / "bare.git"
+            rv.git(repo, "init", "--bare", "-q", str(repo))
+            result = rv.git(repo, "config", "--get", "rv.marker", check=False,
+                            config=("rv.marker=applied",))
+            self.assertEqual(result.stdout.decode().strip(), "applied")

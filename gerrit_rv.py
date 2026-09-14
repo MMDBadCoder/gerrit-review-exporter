@@ -33,7 +33,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 # Gerrit's synthetic paths. Neither names a file in the tree, so neither has
 # code to show; they still carry review discussion worth keeping.
@@ -516,7 +516,7 @@ def comment_span(anchor):
 
 # --- git archive -----------------------------------------------------------
 
-def git(repo, *args, check=True):
+def git(repo, *args, check=True, config=()):
     """Runs Git with a fixed, minimal environment.
 
     Prompts are disabled so an unattended run fails visibly instead of blocking
@@ -534,12 +534,33 @@ def git(repo, *args, check=True):
     # operator configured to let this run authenticate at all.
     if not os.environ.get("GIT_ASKPASS"):
         environment["GIT_ASKPASS"] = "true"
-    result = subprocess.run(["git", "--git-dir", str(repo), *args],
+    options = []
+    for setting in config:
+        options += ["-c", setting]
+    result = subprocess.run(["git", *options, "--git-dir", str(repo), *args],
                             capture_output=True, env=environment)
     if check and result.returncode != 0:
         detail = result.stderr.decode("utf-8", "replace").strip().splitlines()
         raise RvError(f"git {' '.join(args[:2])} failed: {detail[-1] if detail else 'no output'}")
     return result
+
+
+def http_credential_config(settings, remote):
+    """Git config that answers an HTTP prompt from the same credential the API uses.
+
+    Without this, the REST half authenticates and the Git half does not, so a run
+    configured with nothing but a Gerrit HTTP password discovers changes and then
+    fails to fetch a single patch set.
+
+    The helper snippet names the environment variables; it never contains their
+    values, so the password stays out of the process list and off disk. Git
+    inherits the variables from this process and reads them when it asks.
+    """
+    if settings["auth"] != "basic" or not remote.lower().startswith("http"):
+        return ()
+    user, password = settings["user_env"], settings["password_env"]
+    helper = f'!f() {{ echo "username=${user}"; echo "password=${password}"; }}; f'
+    return (f"credential.helper={helper}",)
 
 
 class Archive:
@@ -550,9 +571,10 @@ class Archive:
     second run over the same change fetches nothing.
     """
 
-    def __init__(self, path, remote):
+    def __init__(self, path, remote, git_config=()):
         self.path = Path(path)
         self.remote = remote
+        self.git_config = tuple(git_config)
         self.lock = threading.Lock()
         if not (self.path / "HEAD").exists():
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -569,7 +591,8 @@ class Archive:
             if present == sha:
                 return target
             ref = f"refs/changes/{int(change_number) % 100:02d}/{change_number}/{patchset}"
-            git(self.path, "fetch", "--no-tags", "--no-write-fetch-head", "-q", self.remote, f"{ref}:{target}")
+            git(self.path, "fetch", "--no-tags", "--no-write-fetch-head", "-q", self.remote,
+                f"{ref}:{target}", config=self.git_config)
             actual = git(self.path, "rev-parse", target).stdout.decode().strip()
             if actual != sha:
                 raise RvError(f"Patch set {change_number}/{patchset} changed during capture; rerun")
@@ -943,7 +966,8 @@ def export(config, out=sys.stdout):
     remote = config["gerrit"]["git_url"] or derive_git_url(client.base, config)
     output_dir = Path(config["output"]["dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
-    archive = Archive(output_dir / "code.git", remote)
+    archive = Archive(output_dir / "code.git", remote,
+                      http_credential_config(config["gerrit"], remote))
     budget = Budget(config["limits"])
 
     numbers = discover(client, config, budget)

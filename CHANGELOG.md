@@ -1,5 +1,16 @@
 # Release notes
 
+## 0.2.1
+
+- **A Gerrit HTTP credential is now enough on its own.** With `auth: basic` and an
+  HTTP(S) clone URL, Git authenticates with the same username and password the
+  REST client uses. Previously the REST half authenticated and the Git half did
+  not, so a run configured with nothing but an HTTP password discovered changes
+  and then failed to fetch any patch set. The credential reaches Git through a
+  helper that names the environment variables rather than carrying their values,
+  so it stays out of the process list and off disk. SSH remotes and the `bearer`
+  and `netrc` modes are untouched.
+
 ## 0.2.0
 
 Replaces the raw-capture tool with a `.rv` generator: one file per resolved

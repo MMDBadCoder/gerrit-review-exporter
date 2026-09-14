@@ -1,4 +1,4 @@
-# Testing version 0.2.0
+# Testing version 0.2.1
 
 Two suites. Neither needs credentials for any existing Gerrit server, and every
 account, project, comment and line of code they use is synthetic.
@@ -8,7 +8,7 @@ account, project, comment and line of code they use is synthetic.
 ```bash
 python3 --version   # 3.10 or later
 git --version
-python3 gerrit_rv.py --version   # 0.2.0
+python3 gerrit_rv.py --version   # 0.2.1
 ```
 
 No pip dependencies. Linux or macOS; on Windows use WSL2.
