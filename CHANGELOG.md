@@ -1,5 +1,19 @@
 # Release notes
 
+## 0.3.0
+
+- **`enrich.min_comment_chars`** skips threads with nothing substantial in them.
+  The length is measured over the whole thread rather than each comment, because
+  a short "Done." is the evidence that a long review point was acted on. Default
+  `0`, which keeps everything; `20` drops "LGTM" and bare nits.
+- **`gerrit.insecure_tls`** skips certificate and hostname verification, for an
+  internal server with a self-signed certificate. Off by default, and documented
+  with what it costs: the credential this tool sends is no longer protected from
+  a machine in the middle. `ca_file` remains the better answer.
+- `rv-out/` and `rv.config.json` are git-ignored, so a working directory does not
+  accumulate exports and a config with a real server in it is not committed by
+  accident.
+
 ## 0.2.2
 
 Documentation only; no behaviour changes.

@@ -1,4 +1,4 @@
-# Testing version 0.2.2
+# Testing version 0.3.0
 
 Two suites. Neither needs credentials for any existing Gerrit server, and every
 account, project, comment and line of code they use is synthetic.
@@ -8,7 +8,7 @@ account, project, comment and line of code they use is synthetic.
 ```bash
 python3 --version   # 3.10 or later
 git --version
-python3 gerrit_rv.py --version   # 0.2.2
+python3 gerrit_rv.py --version   # 0.3.0
 ```
 
 No pip dependencies. Linux or macOS; on Windows use WSL2.
@@ -20,7 +20,7 @@ make test
 # or: python3 -m unittest discover -s tests -v
 ```
 
-63 tests covering the parts that decide whether a `.rv` file is correct:
+74 tests covering the parts that decide whether a `.rv` file is correct:
 
 | Area | What is pinned down |
 |---|---|
@@ -32,6 +32,8 @@ make test
 | Config | Defaults fill in, values override, a mistyped key is rejected, `null` limits mean no limit |
 | Query | Empty filter lists do not restrict; multiple values become an OR group; values needing quotes are quoted |
 | Limits | A budget stops at its limit, refuses partial group takes, and reports which limit stopped the run |
+| TLS | Verification is on by default; `insecure_tls` disables both the certificate and the hostname check |
+| Thread length filter | `0` keeps everything; a thread of only short comments is dropped; one substantial comment anywhere keeps it; the threshold is exact and whitespace does not count |
 | HTTP credentials | Git gets a helper for HTTP(S) remotes under `basic`; the snippet names the environment variables and never holds the secret; SSH and the non-basic modes add nothing; `-c` settings reach Git before the subcommand, where they take effect |
 
 The scenario tests build **real Git repositories** and let `Archive` fetch from

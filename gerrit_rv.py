@@ -33,7 +33,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 
 # Gerrit's synthetic paths. Neither names a file in the tree, so neither has
 # code to show; they still carry review discussion worth keeping.
@@ -64,6 +64,10 @@ DEFAULT_CONFIG = {
         "token_env": "GERRIT_TOKEN",
         "netrc_file": None,
         "ca_file": None,
+        # Skips certificate and hostname verification. For an internal server
+        # with a self-signed certificate; it removes the protection that stops a
+        # machine in the middle reading the credential this tool sends.
+        "insecure_tls": False,
         "timeout": 30,
         "retries": 3,
         "delay": 0.0,
@@ -97,6 +101,10 @@ DEFAULT_CONFIG = {
         "include_commit_message_comments": True,
         "author_names": True,
         "max_comment_chars": 4000,
+        # Drops threads with nothing substantial in them: "LGTM", "done", "nit".
+        # Measured over the WHOLE thread, not each comment, because a short reply
+        # like "Done." is the evidence a long review point was acted on. 0 is off.
+        "min_comment_chars": 0,
     },
 }
 
@@ -151,6 +159,8 @@ def validate_config(config):
         raise RvError("enrich.context_lines cannot be negative")
     if int(enrich["max_code_lines"]) < 1:
         raise RvError("enrich.max_code_lines must be at least 1")
+    if int(enrich["min_comment_chars"]) < 0:
+        raise RvError("enrich.min_comment_chars cannot be negative")
     return config
 
 
@@ -219,9 +229,12 @@ class Client:
             raise RvError("Authenticated requests require HTTPS")
 
         self.prefix = "/a" if auth != "anonymous" else ""
+        context = ssl.create_default_context(cafile=settings["ca_file"])
+        if settings["insecure_tls"]:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
         self.opener = urllib.request.build_opener(
-            NoRedirect(),
-            urllib.request.HTTPSHandler(context=ssl.create_default_context(cafile=settings["ca_file"])))
+            NoRedirect(), urllib.request.HTTPSHandler(context=context))
         self.timeout = settings["timeout"]
         self.retries = settings["retries"]
         self.delay = settings["delay"]
@@ -783,6 +796,8 @@ def build_record(archive, detail, thread, config):
     resolved = thread_is_resolved(thread)
     if not resolved and not enrich["include_unresolved"]:
         return None
+    if not substantial(thread, int(enrich["min_comment_chars"])):
+        return None
 
     path = anchor["path"]
     if path == PATCHSET_LEVEL or (path == COMMIT_MSG and not enrich["include_commit_message_comments"]):
@@ -865,6 +880,20 @@ def build_record(archive, detail, thread, config):
         "after_header": after_header,
         "after_code": after_code,
     }
+
+
+def substantial(thread, minimum):
+    """True when some comment in the thread is long enough to be worth learning from.
+
+    The test is over the whole thread rather than each comment. A thread reading
+    "LGTM" and nothing else teaches nothing, but a paragraph answered with "Done."
+    is exactly the pair worth keeping -- and filtering comment by comment would
+    throw away the half that shows the point was acted on.
+    """
+    if minimum <= 0:
+        return True
+    return any(len((comment.get("message") or "").strip()) >= minimum
+               for comment in thread["comments"])
 
 
 def code_header(kind, patchset, first, count, span, note=""):

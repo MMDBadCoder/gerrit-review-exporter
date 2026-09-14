@@ -1,6 +1,6 @@
 # Gerrit review → `.rv` learning files
 
-**Version 0.2.2** · [Testing guide](TESTING.md) · [Release notes](CHANGELOG.md)
+**Version 0.3.0** · [Testing guide](TESTING.md) · [Release notes](CHANGELOG.md)
 
 Turns finished Gerrit code reviews into small, self-contained text files an LLM
 or agent can learn from. One file per resolved review comment thread, each
@@ -87,7 +87,16 @@ default, and an unknown key is an error rather than something silently ignored.
 | `user_env` / `password_env` / `token_env` | `GERRIT_USER` / `GERRIT_HTTP_PASSWORD` / `GERRIT_TOKEN` | Environment variables holding credentials. Credentials are never read from the config file. Under `basic`, the same pair authenticates Git over HTTP(S) |
 | `netrc_file` | `null` | Path to a netrc file for `auth: netrc`. `null` uses the default location |
 | `ca_file` | `null` | CA bundle for verifying the server's TLS certificate. `null` uses the system trust store |
+| `insecure_tls` | `false` | Skip certificate and hostname verification. See the warning below |
 | `timeout` / `retries` / `delay` | `30` / `3` / `0.0` | Per-request seconds, retry count, and a delay between requests for rate-limited servers |
+
+> **`insecure_tls` turns off the protection that keeps your credential private.**
+> With verification disabled, anything able to intercept the connection can
+> present its own certificate, read the HTTP password this tool sends, and return
+> whatever review data it likes. It exists for an internal server with a
+> self-signed certificate, where the alternative is not running at all. Prefer
+> pointing `ca_file` at that server's CA — it keeps verification on and is the
+> same amount of configuration.
 
 ### `filters` — what to export
 
@@ -125,6 +134,21 @@ Set any to `null` to remove that limit.
 | `include_commit_message_comments` | `true` | Export comments on `/COMMIT_MSG` |
 | `author_names` | `true` | Put real names in the discussion. `false` writes `reviewer` |
 | `max_comment_chars` | `4000` | Truncate a very long comment |
+| `min_comment_chars` | `0` | Skip a thread unless some comment in it is at least this long. `0` keeps everything; `20` drops "LGTM", "done" and bare nits |
+
+#### Filtering out threads that teach nothing
+
+A corpus full of `LGTM` and `done` dilutes the threads worth learning from.
+`min_comment_chars` drops them.
+
+The length is measured over the **whole thread**, not each comment, and that
+distinction matters: a paragraph from the reviewer answered with `Done.` is
+exactly the pair you want to keep, and filtering comment by comment would throw
+away the half showing the point was acted on. A thread survives when *any* of its
+comments meets the bar.
+
+It is `0` — off — by default, so upgrading changes nothing. Set it to `20` for the
+behaviour above.
 
 ### `workers` and `output`
 

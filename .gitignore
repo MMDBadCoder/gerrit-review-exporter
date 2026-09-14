@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
 review-export/
+rv-out/
+rv.config.json
 .venv/
 .local-gerrit/
 .env

@@ -8,8 +8,10 @@ refs and `git show` are all genuinely exercised.
 import json
 import os
 from pathlib import Path
+import ssl
 import subprocess
 import sys
+import urllib.request
 import tempfile
 import unittest
 
@@ -571,3 +573,70 @@ class HttpCredentials(unittest.TestCase):
             result = rv.git(repo, "config", "--get", "rv.marker", check=False,
                             config=("rv.marker=applied",))
             self.assertEqual(result.stdout.decode().strip(), "applied")
+
+
+class InsecureTls(unittest.TestCase):
+    def settings(self, **overrides):
+        return {**rv.DEFAULT_CONFIG["gerrit"], "url": "https://review.example.com", **overrides}
+
+    def test_verification_is_on_by_default(self):
+        client = rv.Client(self.settings())
+        handler = next(h for h in client.opener.handlers if isinstance(h, urllib.request.HTTPSHandler))
+        self.assertTrue(handler._context.check_hostname)
+        self.assertEqual(handler._context.verify_mode, ssl.CERT_REQUIRED)
+
+    def test_insecure_tls_disables_both_checks(self):
+        client = rv.Client(self.settings(insecure_tls=True))
+        handler = next(h for h in client.opener.handlers if isinstance(h, urllib.request.HTTPSHandler))
+        self.assertFalse(handler._context.check_hostname)
+        self.assertEqual(handler._context.verify_mode, ssl.CERT_NONE)
+
+    def test_it_is_a_documented_config_key(self):
+        config = rv.load_config(self.config_file({"gerrit": {"insecure_tls": True}}))
+        self.assertTrue(config["gerrit"]["insecure_tls"])
+
+    def config_file(self, data):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "c.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return str(path)
+
+
+class MinimumCommentLength(unittest.TestCase):
+    """Threads with nothing substantial in them are noise in a learning corpus."""
+
+    def thread(self, *messages):
+        return {"comments": [comment(str(i), 1, message=text) for i, text in enumerate(messages)]}
+
+    def test_zero_keeps_everything(self):
+        self.assertTrue(rv.substantial(self.thread("ok"), 0))
+
+    def test_a_thread_of_only_short_comments_is_dropped(self):
+        self.assertFalse(rv.substantial(self.thread("LGTM", "done", "nit"), 20))
+
+    def test_one_substantial_comment_keeps_the_thread(self):
+        # The short reply is the evidence the long point was acted on, so the
+        # test is over the thread rather than each comment.
+        self.assertTrue(rv.substantial(
+            self.thread("This races when two threads call refresh().", "Done."), 20))
+
+    def test_the_substantial_comment_may_be_the_reply(self):
+        self.assertTrue(rv.substantial(
+            self.thread("see below", "Because the cache is rebuilt on every start."), 20))
+
+    def test_the_threshold_is_exact(self):
+        exactly_twenty = "x" * 20
+        self.assertTrue(rv.substantial(self.thread(exactly_twenty), 20))
+        self.assertFalse(rv.substantial(self.thread("x" * 19), 20))
+
+    def test_whitespace_does_not_count_towards_the_length(self):
+        self.assertFalse(rv.substantial(self.thread("   ok   " + " " * 40), 20))
+
+    def test_missing_message_is_treated_as_empty(self):
+        self.assertFalse(rv.substantial({"comments": [{"id": "a"}]}, 20))
+
+    def test_negative_threshold_is_rejected(self):
+        with self.assertRaises(rv.RvError):
+            rv.validate_config(rv.merge_defaults(
+                rv.DEFAULT_CONFIG, {"enrich": {"min_comment_chars": -1}}))
