@@ -18,6 +18,9 @@ the code that answered it.
   set or the last. Threads answered only in words are reported as such.
 - **Line tracing through diff hunks**, so the after section shows the region that
   replaced the commented lines even when the file moved.
+- **Repeatable real-Gerrit suite.** The harness authenticates as `admin` with the
+  development password rather than minting a token per run, which used to exhaust
+  Gerrit's ten-token-per-account cap after ten runs.
 - Handles file-level comments, commit-message comments, `/PATCHSET_LEVEL`,
   deleted and added files, binary files, stale line numbers, replies on much
   later patch sets, orphaned reply roots and reply cycles.

@@ -87,10 +87,13 @@ def main():
     # compose.gerrit-test.yaml uses exactly that, and this is a throwaway
     # loopback instance, so the well-known development password is the
     # bootstrap credential.
-    bootstrap = API(args.url, "admin", "secret")
-    version = bootstrap.call("GET", "/config/server/version")
-    admin_token = bootstrap.call("PUT", f"/accounts/self/tokens/rv-{run_id}", {"lifetime": "1d"})["token"]
-    admin = API(args.url, "admin", admin_token)
+    # `gerrit.war init --dev` creates admin/secret, and the entrypoint in
+    # compose.gerrit-test.yaml uses exactly that. The password authenticates every
+    # admin call directly, so no token is minted: Gerrit caps an account at ten
+    # tokens, and `admin` is the one account every run shares, so minting one per
+    # run makes the eleventh run fail with an opaque "Maximum number of tokens".
+    admin = API(args.url, "admin", "secret")
+    version = admin.call("GET", "/config/server/version")
 
     accounts = {}
     for role in ("developer", "reviewer"):

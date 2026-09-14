@@ -74,10 +74,19 @@ The harness refuses any non-loopback URL, so it cannot touch a real server.
 ### Bootstrap credentials
 
 The container runs `gerrit.war init --dev`, which creates `admin` with the
-well-known development password `secret`. The harness uses that to mint tokens.
-A cookie session from `/login/?account_id=` is deliberately **not** used: Gerrit
-accepts it for GETs but rejects writes made with it, so seeding would fail at the
-first `PUT`.
+well-known development password `secret`. The harness authenticates every admin
+call with that password directly and mints **no** admin token: Gerrit caps an
+account at ten tokens, and `admin` is the one account every run shares, so a
+per-run token would make the eleventh run fail with an opaque
+`Maximum number of tokens (10) already reached`. The per-run developer and
+reviewer accounts are created fresh each time, so their tokens never accumulate.
+
+A cookie session from `/login/?account_id=` is deliberately **not** used either:
+Gerrit accepts it for GETs but rejects writes made with it, so seeding would fail
+at the first `PUT`.
+
+The suite is repeatable — run it as many times as you like against the same
+container.
 
 ### Artefacts and cleanup
 
