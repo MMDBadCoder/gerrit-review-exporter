@@ -28,7 +28,7 @@ import urllib.parse as urlparse
 import urllib.request
 import uuid
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 DETAIL = [("o", x) for x in ("ALL_REVISIONS", "ALL_COMMITS", "MESSAGES", "DETAILED_LABELS", "DETAILED_ACCOUNTS", "REVIEWER_UPDATES")]
 
 
@@ -93,7 +93,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 class Client:
     def __init__(self, args):
-        require(args.url, "Set GERRIT_URL or --url to the Gerrit installation base URL.")
+        require(args.url, "Set url in the config, GERRIT_URL, or --url to the Gerrit installation base URL.")
         self.base = args.url.rstrip("/")
         parsed = urlparse.urlsplit(self.base)
         require(parsed.scheme in ("http", "https") and parsed.hostname, "Gerrit URL must be HTTP(S).")
@@ -102,7 +102,9 @@ class Client:
         self.auth = args.auth
         self.ca = str(Path(args.ca_file).expanduser().resolve()) if args.ca_file else None
         self.username = args.username
-        self.secret = os.environ.get(args.credential_env, "")
+        self.secret = getattr(args, "http_password", None)
+        if self.secret is None:
+            self.secret = os.environ.get(args.credential_env, "")
         if args.credential_file:
             self.secret = Path(args.credential_file).expanduser().read_text().strip()
         if args.ask_credential:
@@ -535,8 +537,40 @@ def self_tests():
     return {"passed": result.testsRun}
 
 
+class ConfigParser(argparse.ArgumentParser):
+    """Load shared connection defaults, then let explicit CLI options override."""
+    def parse_args(self, args=None, namespace=None):
+        probe = argparse.ArgumentParser(add_help=False)
+        probe.add_argument('--config')
+        selected, _ = probe.parse_known_args(args)
+        explicit = selected.config or os.environ.get('GERRIT_CONFIG')
+        path = Path(explicit or '~/.config/gerrit-agent/config.json').expanduser().resolve()
+        defaults = {}
+        if explicit or path.exists():
+            try:
+                config = json.loads(path.read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                raise ReviewError('Cannot read config JSON. Check the file path and JSON syntax.') from None
+            require(isinstance(config, dict), 'Config must be a JSON object.')
+            allowed = {'url', 'username', 'http_password', 'auth', 'ca_file', 'timeout', 'credential_file', 'credential_env'}
+            require(not (set(config) - allowed), 'Config has unsupported keys; see the example config.')
+            for key, value in config.items():
+                if key == 'timeout':
+                    require(type(value) in (int, float) and 0 < value < float('inf'), 'Config timeout must be a positive finite number.')
+                else:
+                    require(isinstance(value, str), 'Config connection fields must be strings; omit unused fields.')
+                if key in ('ca_file', 'credential_file') and value:
+                    candidate = Path(value).expanduser()
+                    value = str((path.parent / candidate).resolve()) if not candidate.is_absolute() else str(candidate)
+                defaults[key] = value
+            require(config.get('auth', 'basic') in ('basic', 'bearer', 'anonymous'), 'Config auth must be basic, bearer, or anonymous.')
+        self.set_defaults(**defaults)
+        return super().parse_args(args, namespace)
+
+
 def parser():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = ConfigParser(description=__doc__)
+    p.add_argument("--config", help="Shared JSON config; defaults to GERRIT_CONFIG or ~/.config/gerrit-agent/config.json")
     p.add_argument("--version", action="version", version=VERSION)
     p.add_argument("--url", default=os.environ.get("GERRIT_URL"))
     p.add_argument("--username", default=os.environ.get("GERRIT_USER"))

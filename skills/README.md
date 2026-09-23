@@ -36,47 +36,48 @@ folders, and network access to Gerrit. Loading text alone cannot grant tools,
 network permissions, or credentials. Project context and existing project
 skills remain separate and should also be available to the agent.
 
-## Shared configuration and credentials
-
-Keep configuration outside Git, for example `~/.config/gerrit-agent/env`:
+## One config file for both skills
 
 ```bash
-export GERRIT_URL='https://gerrit.company.example'
-export GERRIT_USER='your-username'
-export GERRIT_AUTH='basic'
-export GERRIT_CA_FILE='/absolute/path/company-ca.pem'
+mkdir -p "$HOME/.config/gerrit-agent"
+cp skills/gerrit.config.example.json "$HOME/.config/gerrit-agent/config.json"
 ```
 
-Remove the CA variable if using normal public/system trust. Gerrit must be
-reachable from the agent host/container, even if disconnected from the public
-internet. Paths must exist **inside the agent's execution environment**.
+Edit that file and replace the URL, username, HTTP password, and CA path with
+your values. It is normal to store the credential beside these other settings:
 
-Both scripts accept the password through `GERRIT_HTTP_PASSWORD`, a secret file
-(`--credential-file /absolute/path/http-password` before the subcommand), or
-`--ask-credential`. HTTP passwords cannot reveal a username, so Basic auth
-requires both. Obtain the HTTP credential from your Gerrit account settings
-or administrator; browser SSO passwords are not necessarily HTTP credentials.
-
-Prefer your runtime's secret manager to inject the password. For an interactive
-shell, load nonsecret configuration and prompt without writing the password
-into shell history:
-
-```bash
-source "$HOME/.config/gerrit-agent/env"
-read -r -s -p 'Gerrit HTTP password: ' GERRIT_HTTP_PASSWORD
-printf '\n'
-export GERRIT_HTTP_PASSWORD
-# Launch your agent from this shell so its command processes inherit variables.
+```json
+{
+  "url": "https://gerrit.company.example",
+  "username": "your-username",
+  "http_password": "your-gerrit-http-password",
+  "auth": "basic",
+  "ca_file": "company-ca.pem",
+  "timeout": 60
+}
 ```
 
-For unattended operation, mount a password-only file with permissions 600 and
-configure the agent to pass `--credential-file` on every helper invocation.
-Use permissions 700 on its parent directory. Do not put secrets inside a skill,
-AGENTS.md, repository, task directory, Git URL, prompt, or committed `.env` file.
-Never use `env`, `printenv`, or shell tracing to debug secrets. A file is not
-automatically loaded merely because it exists: source your trusted env file
-before starting the agent, or configure the runtime environment explicitly.
-The helpers do not automatically read `.env` files.
+Both skills automatically use this file. No environment variables are necessary.
+Put the PEM certificate beside the config, or use an absolute path. Omit
+`ca_file` for normal system trust. These paths must exist inside the agent's
+execution environment. The URL is Gerrit's installation base, without `/a`.
+
+To keep the config somewhere else (including beside the skill files), pass
+`--config /path/gerrit.json` **before the subcommand** on every command, or set
+`GERRIT_CONFIG=/path/gerrit.json` in the agent's environment. A config just placed
+beside the script is not automatically discovered: select it explicitly.
+
+Explicit CLI connection options override the config; config values override
+legacy environment variables. The inline `http_password` overrides the password
+environment variable; `--credential-file` overrides it, and `--ask-credential`
+overrides both. The optional JSON keys `credential_file` and `credential_env`
+also support these alternative sources. Relative file paths in JSON are relative
+to the config directory. Unknown keys and malformed JSON fail with an error.
+
+Project, branch, task/workspace paths, and the change to review remain task
+inputs. Store your actual config locally; the public example contains only
+placeholders. The helpers do not print the password or store it in Git URLs,
+review bundles, or task state. Agents need the config's path, not its contents.
 
 Check access after installation:
 
@@ -85,7 +86,7 @@ python3 "$HOME/.agents/skills/gerrit-review/gerrit_review.py" doctor
 python3 "$HOME/.agents/skills/gerrit-implement/gerrit_implement.py" doctor
 ```
 
-With password files, add `--credential-file ...` before `doctor`. All global
+With a custom config path, add `--config /path/gerrit.json` before `doctor`. All global
 options go before the subcommand. Both skills share the same configuration;
 implementation project/branch/workspace/task paths are explicit command inputs,
 and review uses a change number/Change-Id/link. The skills contain full examples.
@@ -94,3 +95,17 @@ Example prompts:
 
 - `Use $gerrit-review to review change 123 using the project context and post the review.`
 - `Use $gerrit-implement for project team/service, branch master. Implement the following acceptance criteria, test them, and upload the Gerrit change: ...`
+
+## Verify configuration support
+
+From the source repository:
+
+```bash
+python3 -m unittest discover -s tests -p test_skill_config.py -v
+python3 skills/gerrit-review/gerrit_review.py self-test
+# With the local test Gerrit running (see gerrit-implement/SKILL.md):
+python3 tests/real_gerrit_implement.py
+```
+
+The live test uses one generated config containing synthetic credentials for
+both helpers, and verifies HTTPS, relative CA paths, and patch-set uploads.

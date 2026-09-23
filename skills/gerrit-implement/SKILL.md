@@ -32,41 +32,59 @@ Do not generate a new Change-Id for an ordinary revision. There is no Gerrit
 patch set zero: for implementation, the starting point is the fetched target
 branch (or the current patch set when resuming an existing change).
 
-## Configure access once
+## Shared configuration
 
-Both skills use the same environment:
+Create `~/.config/gerrit-agent/config.json` once. Both helpers load it
+automatically, including the HTTP credential:
 
-```bash
-export GERRIT_URL='https://gerrit.internal.example'
-export GERRIT_USER='your-gerrit-username'
-export GERRIT_AUTH='basic'
-export GERRIT_CA_FILE='/absolute/path/company-ca-bundle.pem'
+```json
+{
+  "url": "https://gerrit.company.example",
+  "username": "your-username",
+  "http_password": "your-gerrit-http-password",
+  "auth": "basic",
+  "ca_file": "company-ca.pem",
+  "timeout": 60
+}
 ```
 
-`GERRIT_URL` is the installation root, including a deployment subpath if used,
-without `/a` or a change URL. Use the Gerrit HTTP password/token, not a browser
-SSO password. Basic authentication requires the username; it cannot be derived
-from an opaque password. `bearer` is only for servers configured for bearer
-OAuth access. CA_FILE is optional for certificates trusted by the operating
-system, required for a private CA. Supply a PEM CA chain; TLS hostname and
-certificate verification remain enabled for REST and Git. No internet access
-is required during normal use; the internal Gerrit host must be reachable.
+Put `company-ca.pem` beside the config, or use an absolute path. Omit `ca_file`
+when the server uses the system trust store. Use the installation base URL,
+including any deployment prefix, without `/a`. Use Gerrit's HTTP credential,
+not necessarily your browser SSO password. Basic authentication needs both
+username and password; the password cannot reveal the username. `bearer` is
+available only if your server supports it. TLS verification remains enabled
+for both REST and Git. Normal operation needs access only to your Gerrit host.
 
-Prefer a runtime secret manager injecting `GERRIT_HTTP_PASSWORD`. Alternatively,
-store only the password in a file outside all repositories and task directories,
-with permissions 600, and pass `--credential-file` before every subcommand:
+You can keep the config wherever convenient, including beside the skill files:
+pass `--config /absolute/path/config.json` before every subcommand, or set
+`GERRIT_CONFIG` to that absolute path once before starting the agent. Without
+those selectors, only `~/.config/gerrit-agent/config.json` is auto-loaded;
+files in the current directory are not automatically selected. The example
+file in the repository is a template and is not loaded automatically.
 
-```bash
-python3 "$IMPLEMENT" --credential-file "$HOME/.config/gerrit-agent/http-password" doctor
-```
+Explicit command-line connection options override config values; config values
+override legacy environment defaults (`GERRIT_URL`, `GERRIT_USER`, `GERRIT_AUTH`,
+`GERRIT_CA_FILE`, `GERRIT_HTTP_PASSWORD`). `http_password` takes precedence over
+the credential environment variable. `--credential-file` overrides that password,
+and `--ask-credential` overrides both. Optional config keys `credential_file`
+and `credential_env` support those alternative credential sources. All other
+keys are rejected to catch typos. Omit unused values instead of using JSON null.
+CA and credential file paths in JSON resolve relative to the config directory;
+paths supplied on the CLI resolve relative to the working directory.
 
-`--ask-credential` prompts without echo in interactive shells. Do not put a
-password in the skill, AGENTS.md, a Git URL, commit message, CLI argument, or
-chat. Do not print environment variables. The helper never saves credentials
-to its task state or Git configuration. Account needs project read and upload
-permissions; administrator access is not needed. A registered Gerrit email is
-used for commits; supply `--name` and `--email` to start/resume if the account
-has no preferred identity. The server still validates that email.
+Keeping the password in this config is supported. The helpers do not echo the
+config/password or copy credentials into task state or Git URLs. Use the file
+locally; the public repository includes only a placeholder example. A malformed
+or explicitly selected missing config produces an error, not a silent fallback.
+Task-specific inputs (change link, project, branch, workspace, output/task path)
+remain command arguments. The agent does not need to read the password to use
+these helpers: it only needs to know the config path.
+
+Verify access with `python3 "$IMPLEMENT" doctor` (or add `--config /path/gerrit.json`
+before `doctor`). Account needs project read and upload permissions, not admin
+access. Commits use the Gerrit account identity; pass `--name` and `--email` to
+start/resume if needed. The server validates the registered author email.
 
 ## 1. Establish the task
 

@@ -1,0 +1,8 @@
+{
+  "url": "https://gerrit.company.example",
+  "username": "your-username",
+  "http_password": "your-gerrit-http-password",
+  "auth": "basic",
+  "ca_file": "company-ca.pem",
+  "timeout": 60
+}

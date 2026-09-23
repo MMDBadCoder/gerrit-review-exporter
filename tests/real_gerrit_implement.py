@@ -41,7 +41,13 @@ admin.call('POST','/projects/'+r.q(project)+'/access',{'add':{'refs/heads/*':{'p
 user='reviewer-'+uuid.uuid4().hex[:10]
 account=admin.call('PUT','/accounts/'+user,{'name':'Review Bot Test','email':user+'@example.com'})
 token=admin.call('PUT',f"/accounts/{account['_account_id']}/tokens/test",{'lifetime':'1d'})['token']
-os.environ.update(GERRIT_URL=https,GERRIT_USER=user,GERRIT_HTTP_PASSWORD=token,GERRIT_CA_FILE=str(work/'ca.pem'))
+config=work/'config.json'
+settings=dict(url=https,username=user,http_password=token,ca_file='ca.pem',auth='basic',timeout=60)
+def write_config():config.write_text(json.dumps(settings))
+write_config()
+for key in ('GERRIT_URL','GERRIT_USER','GERRIT_HTTP_PASSWORD','GERRIT_CA_FILE','GERRIT_AUTH'):
+ os.environ.pop(key,None)
+os.environ['GERRIT_CONFIG']=str(config)
 client=r.Client(r.parser().parse_args(['doctor']))
 def command(*args):return r.main(list(map(str,args)))
 def fail(label,*args):
@@ -54,11 +60,14 @@ def git(*args):
  return result.stdout.decode().strip()
 
 try:
- check(command('doctor')['tls_verified'], 'HTTPS authentication with custom CA')
- ca=os.environ.pop('GERRIT_CA_FILE')
- fail('Untrusted certificate refused','doctor');os.environ['GERRIT_CA_FILE']=ca
- secret=os.environ['GERRIT_HTTP_PASSWORD'];os.environ['GERRIT_HTTP_PASSWORD']='wrong'
- fail('Wrong password refused','doctor');os.environ['GERRIT_HTTP_PASSWORD']=secret
+ check(command('doctor')['tls_verified'], 'HTTPS authentication with config credential and relative CA')
+ review_script=ROOT/'skills/gerrit-review/gerrit_review.py'
+ review_doctor=json.loads(sh(sys.executable,str(review_script),'--config',str(config),'doctor'))
+ check(review_doctor['tls_verified'],'Review helper uses the same config with HTTPS')
+ ca=settings.pop('ca_file');write_config()
+ fail('Untrusted certificate refused','doctor');settings['ca_file']=ca;write_config()
+ secret=settings['http_password'];settings['http_password']='wrong';write_config()
+ fail('Wrong password refused','doctor');settings['http_password']=secret;write_config()
  task=work/'task';command('start','--project',project,'--branch','main','--task',task)
  repo=task/'repo';source=repo
  check(repo.is_dir(),'Clone absent workspace')
@@ -91,7 +100,7 @@ try:
  third=command('push','--task',resumed,'--send');check(third['patchset']==3 and third['number']==first['number'],'Resume link uploads third patch set')
  check(command('status','--task',resumed)['remote']['current_revision']==third['commit'],'Status confirms server SHA')
  config=(source/'.git'/'config').read_text()
- check(token not in config and token not in (resumed/'task.json').read_text(),'No credentials stored in config or state')
+ check(token not in config and token not in (resumed/'task.json').read_text(),'No credentials copied into Git config or task state')
  pending=r.load(resumed/'task.json');pending['pending']='uncertain';r.save(resumed/'task.json',pending)
  check(command('push','--task',resumed)['already_uploaded'],'Pending successful push reconciles by SHA')
  (source/'hello.py').write_text('def hello():\n    return "done"\n')

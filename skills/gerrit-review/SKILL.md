@@ -34,71 +34,66 @@ internet just to use this skill: it works with an internal/offline Gerrit server
 - A numerical vote reflects the evidence you actually collected. Never fabricate
   successful tests, invent a defect, or claim to have read omitted files.
 
-## 1. Configure authentication and TLS once
+## Shared configuration
 
-Set an absolute helper path so changing directories cannot break commands:
+Create `~/.config/gerrit-agent/config.json` once. Both helpers load it
+automatically, including the HTTP credential:
+
+```json
+{
+  "url": "https://gerrit.company.example",
+  "username": "your-username",
+  "http_password": "your-gerrit-http-password",
+  "auth": "basic",
+  "ca_file": "company-ca.pem",
+  "timeout": 60
+}
+```
+
+Put `company-ca.pem` beside the config, or use an absolute path. Omit `ca_file`
+when the server uses the system trust store. Use the installation base URL,
+including any deployment prefix, without `/a`. Use Gerrit's HTTP credential,
+not necessarily your browser SSO password. Basic authentication needs both
+username and password; the password cannot reveal the username. `bearer` is
+available only if your server supports it. TLS verification remains enabled
+for both REST and Git. Normal operation needs access only to your Gerrit host.
+
+You can keep the config wherever convenient, including beside the skill files:
+pass `--config /absolute/path/config.json` before every subcommand, or set
+`GERRIT_CONFIG` to that absolute path once before starting the agent. Without
+those selectors, only `~/.config/gerrit-agent/config.json` is auto-loaded;
+files in the current directory are not automatically selected. The example
+file in the repository is a template and is not loaded automatically.
+
+Explicit command-line connection options override config values; config values
+override legacy environment defaults (`GERRIT_URL`, `GERRIT_USER`, `GERRIT_AUTH`,
+`GERRIT_CA_FILE`, `GERRIT_HTTP_PASSWORD`). `http_password` takes precedence over
+the credential environment variable. `--credential-file` overrides that password,
+and `--ask-credential` overrides both. Optional config keys `credential_file`
+and `credential_env` support those alternative credential sources. All other
+keys are rejected to catch typos. Omit unused values instead of using JSON null.
+CA and credential file paths in JSON resolve relative to the config directory;
+paths supplied on the CLI resolve relative to the working directory.
+
+Keeping the password in this config is supported. The helpers do not echo the
+config/password or copy credentials into task state or Git URLs. Use the file
+locally; the public repository includes only a placeholder example. A malformed
+or explicitly selected missing config produces an error, not a silent fallback.
+Task-specific inputs (change link, project, branch, workspace, output/task path)
+remain command arguments. The agent does not need to read the password to use
+these helpers: it only needs to know the config path.
+
+Set the helper's absolute path once so changing directories cannot break commands:
 
 ```bash
 export GERRIT_REVIEW_HELPER=/absolute/path/to/gerrit-review/gerrit_review.py
-export GERRIT_URL=https://review.internal.example/gerrit
-export GERRIT_USER=review-bot
-export GERRIT_CA_FILE=/absolute/path/to/company-ca-bundle.pem
-```
-
-The URL is the installation base, with any `/gerrit` prefix, **without `/a`**.
-Use the PEM CA certificate/bundle that signed the server certificate. A directly
-trusted self-signed server certificate may serve as that trust anchor, provided
-its hostname matches the URL. The certificate is public trust material, **not a
-private key**. TLS and hostname verification stay enabled for both Python and Git.
-Unset `GERRIT_CA_FILE` to use the system trust store. Do not work around certificate
-errors with `-k`, an insecure TLS flag, or a hostname mismatch.
-
-Supply the HTTP password/authentication token through the environment, a protected
-file, or a local hidden prompt. For an interactive Bash terminal:
-
-```bash
-read -r -s -p 'Gerrit HTTP credential: ' GERRIT_HTTP_PASSWORD
-export GERRIT_HTTP_PASSWORD
 python3 "$GERRIT_REVIEW_HELPER" doctor
+# When the config is elsewhere:
+python3 "$GERRIT_REVIEW_HELPER" --config /path/gerrit.json doctor
 ```
 
-Do not ask the user to paste a credential into chat. Automation should inject it
-from its secret store. Alternative inputs, placed **before** the subcommand:
-
-```bash
-python3 "$GERRIT_REVIEW_HELPER" --credential-file /protected/gerrit-token doctor
-python3 "$GERRIT_REVIEW_HELPER" --ask-credential doctor
-python3 "$GERRIT_REVIEW_HELPER" --url https://review.internal --username bot \
-  --ca-file /certs/ca.pem doctor
-```
-
-HTTP Basic needs both the Gerrit username and its HTTP credential. The helper
-cannot derive a username from an opaque password/token. `doctor` shows the
-authenticated account so you can confirm which bot will author comments. A web
-SSO password/cookie is not necessarily an HTTP credential. Use the account's HTTP
-credentials or authentication-token settings provided by that Gerrit installation.
-
-For a deployment explicitly supporting OAuth bearer authentication:
-
-```bash
-export GERRIT_AUTH=bearer
-# Secret store sets GERRIT_TOKEN; do not print it.
-python3 "$GERRIT_REVIEW_HELPER" --credential-env GERRIT_TOKEN doctor
-```
-
-Pass `--credential-env GERRIT_TOKEN` before **every** online command in that mode,
-or inject the bearer credential into the default `GERRIT_HTTP_PASSWORD` variable.
-Username is unnecessary in bearer mode; token-to-account mapping happens on the
-server. Gerrit's ordinary HTTP tokens generally use **Basic**, not Bearer. Do not
-change modes merely because the credential is called a token. Anonymous mode is
-read-only and cannot create an authenticated review plan or post votes.
-
-The same HTTP authorization and CA are applied to Git. No separate SSH key or
-credential-helper setup is needed. Credentials are sent only to the configured
-Gerrit installation. Cross-host Git URLs and redirects are refused. The helper
-does not save credentials in clone URLs, bundle JSON, or command arguments.
-
-**Continue only when `doctor` reports the intended server version and account.**
+`doctor` reports the authenticated account. Use the same config for every command.
+Anonymous access cannot create an authenticated review plan or publish a review.
 
 ## 2. Resolve the target and examine its status
 
