@@ -14,6 +14,14 @@ Requires **Python 3.10+ and Git**. No pip packages. Every REST call is a GET and
 every Git operation fetches into a local bare archive — nothing on Gerrit is
 modified, and no comment is ever resolved, replied to or scored by this tool.
 
+## Agent skills
+
+The separate [Gerrit review and implementation skills](skills/README.md) support
+posting code reviews and uploading changes/patch sets. Each includes a standalone
+Python helper. See the linked guide for installation, shared credentials, and
+private CA configuration. These skills can write to Gerrit when explicitly
+invoked to publish; the exporter described here remains read-only.
+
 ## What a `.rv` file looks like
 
 ```
