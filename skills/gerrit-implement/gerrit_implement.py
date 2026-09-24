@@ -2,7 +2,7 @@
 """Gerrit implementation workbench. Python 3.10+, Git, Linux/macOS; standard library only.
 
 Run --help or COMMAND --help. See the adjacent SKILL.md for the complete workflow.
-Only `push --send` writes to Gerrit; other commands prepare local work.
+Only push/reviewers/ready with `--send` write to Gerrit; other commands prepare local work.
 """
 from __future__ import annotations
 import argparse
@@ -28,7 +28,7 @@ import urllib.parse as urlparse
 import urllib.request
 import uuid
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 DETAIL = [("o", x) for x in ("ALL_REVISIONS", "ALL_COMMITS", "MESSAGES", "DETAILED_LABELS", "DETAILED_ACCOUNTS", "REVIEWER_UPDATES")]
 
 
@@ -253,11 +253,7 @@ def start(client, args):
     directory.mkdir(parents=True, mode=0o700)
     repo = directory / 'repo'
     url = client.base + client.prefix + '/' + q(project)
-    if args.workspace and args.workspace.exists():
-        client.git('clone', '--no-local', '--no-hardlinks', '--no-checkout', str(args.workspace.resolve()), str(repo))
-        client.git('remote', 'set-url', 'origin', url, cwd=repo)
-    else:
-        client.git('clone', '--no-checkout', url, str(repo))
+    client.git('clone', '--no-checkout', url, str(repo))
     client.git('fetch', url, 'refs/heads/' + branch, cwd=repo)
     base = output_git(client, repo, 'rev-parse', 'FETCH_HEAD')
     expected = None
@@ -321,6 +317,81 @@ def operate(client, args):
             return dict(committed=output_git(client, repo, 'diff', state['base'], 'HEAD'),
                         unstaged=output_git(client, repo, 'diff'), staged=output_git(client, repo, 'diff', '--cached'),
                         untracked=output_git(client, repo, 'ls-files', '--others', '--exclude-standard'))
+        if args.command == 'ready':
+            remote = remote_state(client, state)
+            require(remote and remote['status'] == 'NEW' and remote['current_revision'] == sha, 'An open change at this exact current revision is required.')
+            require(state.get('checks') and state['checks'].get('head') == sha, 'Run project checks for this revision before marking ready.')
+            require(not output_git(client, repo, 'status', '--porcelain'), 'Working tree must be clean.')
+            if not args.send:
+                return dict(dry_run=True, mark_ready=bool(remote.get('work_in_progress')))
+            if remote.get('work_in_progress'):
+                client.request('/changes/' + str(remote['_number']) + '/ready', payload={})
+            require(not client.detail(remote['_number']).get('work_in_progress'), 'Readiness not confirmed; inspect status.')
+            return dict(ready=True, number=remote['_number'])
+        if args.command == 'reviewers':
+            remote = remote_state(client, state)
+            require(remote and remote['status'] == 'NEW', 'An open uploaded change is required.')
+            require(remote['current_revision'] == sha, 'Resume the latest patch set before assigning reviewers.')
+            accounts = [client.request('/accounts/' + q(value) + '/detail') for value in args.reviewer]
+            ids = sorted({a['_account_id'] for a in accounts})
+            existing = {a['_account_id'] for a in remote.get('reviewers', {}).get('REVIEWER', [])}
+            missing = [account_id for account_id in ids if account_id not in existing]
+            if not args.send:
+                return dict(dry_run=True, add_reviewer_ids=missing)
+            for account_id in missing:
+                result = client.request('/changes/' + str(remote['_number']) + '/reviewers',
+                                        payload={'reviewer': str(account_id), 'state': 'REVIEWER'})
+                require(not result.get('error'), 'Gerrit rejected reviewer assignment; inspect status before retrying.')
+            confirmed = client.detail(remote['_number'])
+            present = {a['_account_id'] for a in confirmed.get('reviewers', {}).get('REVIEWER', [])}
+            require(set(ids) <= present, 'Reviewer assignment not confirmed; inspect status before retrying.')
+            return dict(reviewer_ids=ids, confirmed=True)
+        if args.command == 'sync':
+            require(not state['pending'], 'Reconcile pending push before syncing.')
+            require(not output_git(client, repo, 'status', '--porcelain'), 'Commit local edits before syncing.')
+            remote = remote_state(client, state)
+            if remote:
+                require(remote['status'] == 'NEW' and remote['current_revision'] == state['expected'], 'Remote changed; resume latest patch set in a new task.')
+            client.git('fetch', state['url'], 'refs/heads/' + state['branch'], cwd=repo)
+            new_base = output_git(client, repo, 'rev-parse', 'FETCH_HEAD')
+            require(client.git('merge-base', '--is-ancestor', state['base'], new_base, cwd=repo, check=False).returncode == 0,
+                    'Branch diverged or change is stacked. Preserve work; project-specific recovery is needed.')
+            if new_base != state['base']:
+                if state['committed']:
+                    result = client.git('rebase', '--onto', new_base, state['base'], cwd=repo, check=False)
+                    if result.returncode:
+                        client.git('rebase', '--abort', cwd=repo)
+                        raise ReviewError('Rebase conflict; aborted and preserved the original commit. Resolve in a fresh task on the updated branch.')
+                    if output_git(client, repo, 'rev-parse', 'HEAD') == new_base:
+                        client.git('reset', '--hard', sha, cwd=repo)
+                        raise ReviewError('Change became empty on the new base. Original commit restored; inspect upstream changes.')
+                else:
+                    client.git('reset', '--hard', new_base, cwd=repo)
+                state.update(base=new_base, head=output_git(client, repo, 'rev-parse', 'HEAD'), checks=None)
+                save(directory / 'task.json', state)
+            return dict(base=state['base'], head=state['head'], next='Refresh context and run check before push.')
+        if args.command == 'check':
+            require(not output_git(client, repo, 'status', '--porcelain'), 'Commit intended changes and clean test artifacts before checking.')
+            commands = load(args.commands_file)
+            require(isinstance(commands, list) and commands and all(isinstance(cmd, list) and cmd and all(isinstance(x, str) and x for x in cmd) for cmd in commands),
+                    'Checks file must be a nonempty JSON array of command argument arrays.')
+            state['checks'] = None
+            save(directory / 'task.json', state)
+            results = []
+            for index, command in enumerate(commands, 1):
+                log = directory / f'check-{index}.log'
+                with log.open('wb') as stream:
+                    try:
+                        result = subprocess.run(command, cwd=repo, stdout=stream, stderr=subprocess.STDOUT, timeout=args.check_timeout)
+                    except subprocess.TimeoutExpired:
+                        raise ReviewError(f'Check {index} timed out. Inspect {log}; push remains blocked.') from None
+                results.append(dict(command=command, exit_code=result.returncode, log=str(log)))
+                require(result.returncode == 0, f'Check {index} failed. Inspect {log}; push remains blocked.')
+            require(output_git(client, repo, 'rev-parse', 'HEAD') == sha and not output_git(client, repo, 'status', '--porcelain'),
+                    'Checks changed the checkout. Inspect changes, commit if intended, and rerun checks.')
+            state['checks'] = dict(head=sha, passed_at=now(), results=results)
+            save(directory / 'task.json', state)
+            return dict(passed=True, **state['checks'])
         if args.command == 'commit':
             require(not state['pending'], 'A push outcome is pending. Run push to reconcile before editing the commit.')
             message = commit_message(args.message_file.read_text(), state['change_id'])
@@ -337,7 +408,7 @@ def operate(client, args):
             if state['committed']:
                 argv.append('--amend')
             client.git(*argv, cwd=repo, data=message.encode())
-            state.update(head=output_git(client, repo, 'rev-parse', 'HEAD'), committed=True)
+            state.update(head=output_git(client, repo, 'rev-parse', 'HEAD'), committed=True, checks=None)
             save(directory / 'task.json', state)
             return dict(head=state['head'], change_id=state['change_id'], changed=changed, next='Inspect diff, then push preview and push --send.')
         require(state['committed'], 'Commit the implementation before pushing.')
@@ -355,9 +426,15 @@ def operate(client, args):
             require(state['expected'] is None, 'Previously uploaded change is no longer visible.')
         # Reject accidental stacks and stale/divergent branch bases before uploading.
         client.git('fetch', state['url'], 'refs/heads/' + state['branch'], cwd=repo)
-        require(client.git('merge-base', '--is-ancestor', state['base'], 'FETCH_HEAD', cwd=repo, check=False).returncode == 0,
-                'Recorded base is not on the target branch. Stacked changes or rewritten branches require a project-specific workflow.')
+        require(output_git(client, repo, 'rev-parse', 'FETCH_HEAD') == state['base'],
+                'Target branch advanced. Run sync, refresh context, then rerun check before pushing.')
+        require(state.get('checks', {}).get('head') == sha if state.get('checks') else False,
+                'No passing checks for this commit. Run check with the project-required commands before pushing.')
         ref = 'refs/for/' + state['branch'] + '%no-publish-comments'
+        if args.wip:
+            ref += ',wip'
+        elif args.ready:
+            ref += ',ready'
         if not args.send:
             return dict(dry_run=True, commit=sha, change_id=state['change_id'], destination=ref, project=state['project'])
         state['pending'] = sha
@@ -419,11 +496,10 @@ def parser():
     p.add_argument('--timeout', type=int, default=60)
     sub = p.add_subparsers(dest='command', required=True)
     sub.add_parser('doctor')
-    for command in ('start', 'resume', 'status', 'diff', 'commit', 'push'):
+    for command in ('start', 'resume', 'status', 'diff', 'commit', 'sync', 'check', 'reviewers', 'ready', 'push'):
         s = sub.add_parser(command)
         s.add_argument('--task', type=Path, required=True)
         if command in ('start', 'resume'):
-            s.add_argument('--workspace', type=Path)
             s.add_argument('--name')
             s.add_argument('--email')
             if command == 'start':
@@ -434,8 +510,17 @@ def parser():
         if command == 'commit':
             s.add_argument('--path', action='append', required=True)
             s.add_argument('--message-file', type=Path, required=True)
-        if command == 'push':
+        if command == 'check':
+            s.add_argument('--commands-file', type=Path, required=True)
+            s.add_argument('--check-timeout', type=float, default=1800)
+        if command == 'reviewers':
+            s.add_argument('--reviewer', action='append', required=True, help='Exact Gerrit account ID, username, or email; repeat for multiple people')
+        if command in ('push', 'reviewers', 'ready'):
             s.add_argument('--send', action='store_true')
+        if command == 'push':
+            mode = s.add_mutually_exclusive_group()
+            mode.add_argument('--wip', action='store_true')
+            mode.add_argument('--ready', action='store_true')
     return p
 
 

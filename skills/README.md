@@ -88,7 +88,7 @@ python3 "$HOME/.agents/skills/gerrit-implement/gerrit_implement.py" doctor
 
 With a custom config path, add `--config /path/gerrit.json` before `doctor`. All global
 options go before the subcommand. Both skills share the same configuration;
-implementation project/branch/workspace/task paths are explicit command inputs,
+implementation project/branch/task paths are explicit command inputs,
 and review uses a change number/Change-Id/link. The skills contain full examples.
 
 Example prompts:
@@ -109,3 +109,24 @@ python3 tests/real_gerrit_implement.py
 
 The live test uses one generated config containing synthetic credentials for
 both helpers, and verifies HTTPS, relative CA paths, and patch-set uploads.
+
+## Implementation upload gate
+
+The implementation helper always clones from Gerrit into its own task directory;
+`--workspace` is no longer supported. Read project AGENTS.md and skills, plan
+the change, and select the project's required checks before editing. After
+committing, run `sync`, then `check --task ... --commands-file ...`. The checks
+file is a JSON array of command argument arrays, such as
+`[["make", "test"], ["make", "lint"]]`. Push refuses a new revision without
+passing checks for its exact SHA, or when its base is behind the target branch.
+The agent must select the complete project check suite; these checks cannot
+guarantee remote CI success. See the implementation skill for WIP milestones,
+readiness, concise messages, and assigning explicitly requested reviewers.
+
+Run the live integration tests with the provided local test server:
+
+```bash
+docker compose -p gerrit-export-test -f compose.gerrit-test.yaml up -d
+# Wait until http://127.0.0.1:18080 responds.
+python3 tests/real_gerrit_implement.py
+```
