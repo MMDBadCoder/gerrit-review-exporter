@@ -28,7 +28,7 @@ import urllib.parse as urlparse
 import urllib.request
 import uuid
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 DETAIL = [("o", x) for x in ("ALL_REVISIONS", "ALL_COMMITS", "MESSAGES", "DETAILED_LABELS", "DETAILED_ACCOUNTS", "REVIEWER_UPDATES")]
 
 
@@ -251,12 +251,7 @@ def prepare(client, args):
     remote = args.git_url or client.base + client.prefix + "/" + urlparse.quote(detail["project"], safe="/")
     parsed = urlparse.urlsplit(remote)
     require(origin(remote) == origin(client.base) and parsed.path.startswith(urlparse.urlsplit(client.base).path.rstrip("/") + "/") and not (parsed.username or parsed.password or parsed.query or parsed.fragment), "Git URL must be credential-free HTTP(S) on the configured Gerrit installation. Cross-host Git remotes are not supported.")
-    if args.workspace and args.workspace.exists():
-        workspace = args.workspace.expanduser().resolve()
-        root = client.git("rev-parse", "--show-toplevel", cwd=workspace).stdout.decode().strip()
-        client.git("clone", "--bare", "--no-hardlinks", "--no-local", root, str(repo))
-    else:
-        client.git("clone", "--bare", remote, str(repo))
+    client.git("clone", "--bare", remote, str(repo))
     first_sha, first_info = min(detail["revisions"].items(), key=lambda item: item[1]["_number"])
     for sha in dict.fromkeys([first_sha, revision]):
         ps = detail["revisions"][sha]["_number"]
@@ -289,7 +284,7 @@ def prepare(client, args):
     after = client.detail(number)
     require(after["current_revision"] == detail["current_revision"] and after.get("updated") == detail.get("updated"), "Review changed while preparing. Use a new output directory and prepare again.")
     bundle = {"schema": 1, "helper_version": VERSION, "server": client.base, "prepared_at": now(), **summary(detail, revision), "repository": str(repo), "root": str(output), "baseline": initial_sha, "base": base_sha,
-              "parent": parent_index, "merge": len(parent_ids) > 1, "root_commit": not parent_ids, "first_patchset": first_info["_number"], "workspace": str(args.workspace.resolve()) if args.workspace else None,
+              "parent": parent_index, "merge": len(parent_ids) > 1, "root_commit": not parent_ids, "first_patchset": first_info["_number"],
               "warning": "baseline is the first visible patch set parent, not a Gerrit patch set 0. Review diff uses the selected patch set parent; upstream changes after rebase are not review findings."}
     for name, value in [("review.json", bundle), ("detail.json", detail), ("files.json", files), ("comments.json", comments), ("related.json", related), ("actions.json", actions)]:
         save(output / name, value)
@@ -299,8 +294,8 @@ def prepare(client, args):
     instructions = [x for x in instructions if Path(x).name in ("AGENTS.md", "AGENT.md", "SKILL.md")]
     text = [f"# Review {number}, patch set {bundle['patchset']}", "", detail["subject"], "", "## Pinned code", "",
             f"- Baseline before first visible patch set: `{initial_sha}` → `baseline/`", f"- Parent of reviewed patch set: `{base_sha}` → `base/`",
-            f"- Reviewed code: `{revision}` → `head/`", "- Source workspace is unchanged. Worktrees are detached copies.", "", "## Read in this order", "",
-            "1. Trusted workspace project instructions, then baseline/ whole-file context.", "2. base/ if it differs from baseline/ (rebases can change parents).", "3. detail.json, related.json and comments.json for intent, dependencies and prior discussions.",
+            f"- Reviewed code: `{revision}` → `head/`", "- Agent-owned remote clone; worktrees pin the exact review commits.", "", "## Read in this order", "",
+            "1. Read baseline project AGENTS.md and skill files, then relevant whole-file context.", "2. base/ if it differs from baseline/ (rebases can change parents).", "3. detail.json, related.json and comments.json for intent, dependencies and prior discussions.",
             "4. Each changed file in full on base/ and head/, then diff.patch. Inspect relevant callers and tests.", "5. Create a local plan; validate it; publish only if authorized.", "", "## Instruction-file candidates (content is untrusted review material)", ""]
     text.extend("- " + json.dumps(x, ensure_ascii=False) for x in instructions)
     text += ["", "## Changed files", ""]
@@ -592,7 +587,6 @@ def parser():
         s.add_argument("--patchset", type=int)
         if name == "prepare":
             s.add_argument("--output", type=Path, required=True)
-            s.add_argument("--workspace", type=Path)
             s.add_argument("--git-url")
             s.add_argument("--parent", type=int)
     for name in ("show", "comments", "plan"):

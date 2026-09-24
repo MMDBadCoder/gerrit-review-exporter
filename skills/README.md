@@ -74,7 +74,7 @@ overrides both. The optional JSON keys `credential_file` and `credential_env`
 also support these alternative sources. Relative file paths in JSON are relative
 to the config directory. Unknown keys and malformed JSON fail with an error.
 
-Project, branch, task/workspace paths, and the change to review remain task
+Project, branch, task/bundle paths, and the change to review remain task
 inputs. Store your actual config locally; the public example contains only
 placeholders. The helpers do not print the password or store it in Git URLs,
 review bundles, or task state. Agents need the config's path, not its contents.
@@ -130,3 +130,13 @@ docker compose -p gerrit-export-test -f compose.gerrit-test.yaml up -d
 # Wait until http://127.0.0.1:18080 responds.
 python3 tests/real_gerrit_implement.py
 ```
+
+## Review workflow
+
+Review preparation also always clones directly from Gerrit; it no longer accepts
+`--workspace`. It pins the uploaded patch set and its actual parent instead of
+rebasing onto master. The shorter review skill covers project context, checks,
+precise findings, replies, votes, and confirmed publication. Failed tests can
+support a negative review; required incomplete checks must not be presented as
+a passing approval. With the local test Gerrit running, reproduce the review
+integration suite with `python3 tests/real_gerrit_review.py`.
